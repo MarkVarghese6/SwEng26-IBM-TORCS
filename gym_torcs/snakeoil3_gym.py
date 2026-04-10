@@ -58,9 +58,8 @@ import sys
 import getopt
 import os
 import time
-import pathlib  # fix for finding correct file path
 
-from keyboard_input import autostart_torcs
+from autostart import launch_torcs
 
 PI = 3.14159265359
 
@@ -688,26 +687,6 @@ def drive_example(c):
     if S["speedX"] > 170:
         R["gear"] = 6
     return
-
-
-def launch_torcs(vision):
-    cwd = os.getcwd()
-    # os.chdir('torcs') fix for finding correct file path
-    BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
-    TORCS_DIR = BASE_DIR / "torcs"
-    os.chdir(TORCS_DIR)
-
-    os.system("taskkill /f /im wtorcs.exe")
-    time.sleep(1)
-    if vision is True:
-        os.system('start "" wtorcs -nofuel -nodamage -nolaptime  -vision &')
-    else:
-        os.system('start "" wtorcs  -nofuel -nodamage -nolaptime &')
-    time.sleep(10)  # Need to wait for torcs to open
-    autostart_torcs()
-    time.sleep(5)  # Wait for server to open
-    os.chdir(cwd)
-
 
 # ================ MAIN ================
 if __name__ == "__main__":

@@ -1,0 +1,83 @@
+{
+  "active_profile": "Blazing Racing Team",
+  "profiles": [
+    {
+      "name": "Blazing Racing Team",
+      "description": "Standard branding profile.",
+      "banners": {
+        "splash_screen": {
+          "file": "splah_original.png",
+          "target_path": "data/img/splash.png",
+          "width": 512,
+          "height": 512,
+          "notes": "Main menu splash image"
+        },
+        "loading_screen": {
+          "file": null,
+          "target_path": "data/img/loading.png",
+          "width": 800,
+          "height": 600,
+          "notes": "Loading screen banner"
+        }
+      },
+      "livery": {
+        "car_model": "car1-trb1",
+        "texture_file": null,
+        "target_path": "cars/car1-trb1/car1-trb1.png",
+        "notes": "Primary livery texture for car1-trb1"
+      }
+    },
+    {
+      "name": "Pro Endurance Team",
+      "description": "High-res endurance branding set.",
+      "banners": {
+        "splash_screen": {
+          "file": null,
+          "target_path": "data/img/splash.png",
+          "width": 1920,
+          "height": 1080,
+          "notes": "HD splash image"
+        },
+        "loading_screen": {
+          "file": null,
+          "target_path": "data/img/loading.png",
+          "width": 1280,
+          "height": 720,
+          "notes": "Loading screen banner"
+        }
+      },
+      "livery": {
+        "car_model": "car2-gt",
+        "texture_file": null,
+        "target_path": "cars/car2-gt/car2-gt.png",
+        "notes": "Primary livery texture for car1-trb1"
+      }
+    },
+    {
+      "name": "Velocity Motors",
+      "description": "Alternative branding setup for car1-trb1.",
+      "banners": {
+        "splash_screen": {
+          "file": null,
+          "target_path": "data/img/splash.png",
+          "width": 1024,
+          "height": 1024,
+          "notes": "Square splash variant"
+        },
+        "loading_screen": {
+          "file": null,
+          "target_path": "data/img/loading.png",
+          "width": 1280,
+          "height": 800,
+          "notes": "Wide loading banner"
+        }
+      },
+      "livery": {
+        "car_model": "car1-trb1",
+        "texture_file": null,
+        "target_path": "cars/car1-trb1/car1-trb1.png",
+        "notes": "Alternate livery for car1-trb1"
+      }
+    }
+  ]
+}

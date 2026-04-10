@@ -2,11 +2,11 @@ import gymnasium as gym  # stablebaselines expects gymnasium instead of gym
 from gymnasium import spaces
 import numpy as np
 
-# from os import path
-import snakeoil3_gym as snakeoil3
 import copy
 import collections as col
 import os
+import snakeoil3_gym as snakeoil3
+from autostart import launch_torcs, close_torcs
 
 
 class TorcsEnv:
@@ -14,12 +14,26 @@ class TorcsEnv:
     termination_limit_progress = 5
     default_speed = 50
     centerline_deadband = 0.15
-    offcenter_weight = 0.35
+    offcenter_weight = 0.22
     curve_clearance_threshold = 0.72
-    curve_speed_weight = 0.75
-    low_progress_patience = 60
-    low_progress_curve_grace = 0.35
-    corner_progress_min = 1.0
+    curve_speed_weight = 0.38
+    straight_clearance_threshold = 0.74
+    straight_angle_threshold = 0.16
+    straight_speed_target = 230.0
+    straight_speed_bonus_weight = 3.80
+    throttle_brake_split = -0.70
+    brake_action_scale = 0.90
+    straight_brake_damping = 0.25
+    straight_brake_clearance = 0.80
+    straight_brake_angle = 0.11
+    straight_assist_track_pos = 0.45
+    straight_min_accel = 0.65
+    steer_deadzone = 0.03
+    steer_smoothing = 0.40
+    straight_steer_damping = 0.75
+    low_progress_patience = 120
+    low_progress_curve_grace = 0.45
+    corner_progress_min = 0.5
 
     initial_reset = True
 
@@ -28,13 +42,12 @@ class TorcsEnv:
         self.throttle = throttle
         self.gear_change = gear_change
         self.last_u = None
-        self.last_steer = 0
         self.initial_run = True
         self._force_relaunch_next_reset = False
         self._low_progress_steps = 0
+        self._prev_steer = 0.0
 
-        ##print("launch torcs")
-        snakeoil3.launch_torcs(self.vision)
+        launch_torcs(self.vision)
 
         n_act = 1 + (1 if self.throttle else 0) + (1 if self.gear_change else 0)
         self.action_space = spaces.Box(
@@ -64,8 +77,26 @@ class TorcsEnv:
         # Apply Action
         action_torcs = client.R.d
 
-        # Steering
-        action_torcs["steer"] = this_action["steer"]  # in [-1, 1]
+        # Steering: smooth + damp on obvious straights to reduce wobble.
+        forward_track_pre = float(np.clip(client.S.d["track"][9] / 200.0, 0.0, 1.0))
+        angle_pre = abs(float(client.S.d["angle"]))
+        track_pos_pre = abs(float(client.S.d["trackPos"]))
+        straight_driving = (
+            forward_track_pre >= self.straight_brake_clearance
+            and angle_pre <= self.straight_brake_angle
+            and track_pos_pre <= self.straight_assist_track_pos
+        )
+
+        steer_raw = float(this_action["steer"])
+        if abs(steer_raw) < self.steer_deadzone:
+            steer_raw = 0.0
+        steer_cmd = (1.0 - self.steer_smoothing) * self._prev_steer + (
+            self.steer_smoothing * steer_raw
+        )
+        if straight_driving:
+            steer_cmd *= self.straight_steer_damping
+        action_torcs["steer"] = float(np.clip(steer_cmd, -1.0, 1.0))
+        self._prev_steer = action_torcs["steer"]
 
         #  Simple Autnmatic Throttle Control by Snakeoil
         if self.throttle is False:
@@ -92,15 +123,27 @@ class TorcsEnv:
                 action_torcs["accel"] -= 0.2
         else:
             raw_accel = this_action["accel"]  # in [-1, 1]
-            # Asymmetric split: 85 % of the range is throttle, 15 % is brake.
-            #   [-1, -0.7) → brake   [0 … 1]
-            #   [-0.7,  1] → throttle [0 … 1]
-            if raw_accel >= -0.7:
-                action_torcs["accel"] = (raw_accel + 0.7) / 1.7  # [-0.7,1] → [0,1]
+            # Keep most of the action range in throttle and soften brake intensity.
+            split = self.throttle_brake_split
+            if raw_accel >= split:
+                action_torcs["accel"] = (raw_accel - split) / (1.0 - split)
                 action_torcs["brake"] = 0
             else:
                 action_torcs["accel"] = 0
-                action_torcs["brake"] = (-raw_accel - 0.7) / 0.3  # [-1,-0.7) → [0,1]
+                brake_raw = (split - raw_accel) / max(split + 1.0, 1e-6)
+                action_torcs["brake"] = self.brake_action_scale * float(
+                    np.clip(brake_raw, 0.0, 1.0)
+                )
+
+            # Prevent unnecessary hard braking on long straights.
+            forward_track = float(np.clip(client.S.d["track"][9] / 200.0, 0.0, 1.0))
+            if action_torcs["brake"] > 0.0 and straight_driving:
+                action_torcs["brake"] *= self.straight_brake_damping
+
+            if straight_driving and action_torcs["brake"] <= 0.05:
+                action_torcs["accel"] = max(
+                    action_torcs["accel"], self.straight_min_accel
+                )
 
         #  Automatic Gear Change by Snakeoil
         if self.gear_change is True:
@@ -120,7 +163,7 @@ class TorcsEnv:
             if client.S.d["speedX"] > 170:
                 action_torcs["gear"] = 6
 
-        # Save the privious full-obs from torcs for the reward calculation
+        # Save the previous full-obs from torcs for the reward calculation
         obs_pre = copy.deepcopy(client.S.d)
 
         # One-Step Dynamics Update #################################
@@ -155,14 +198,8 @@ class TorcsEnv:
         center_error = max(0.0, abs(track_pos_c) - self.centerline_deadband)
         offcenter = speed_x * center_error
 
-        reward = ((forward * 1.8) - 0.8 * side - self.offcenter_weight * offcenter) / 100.0
+        reward = (forward - 0.5 * side - self.offcenter_weight * offcenter) / 100.0
         reward -= 0.01  # small step cost to discourage stalling
-
-        # Steering smoothness penalty
-        current_steer = float(this_action["steer"])
-        steer_change = abs(current_steer - self.last_steer)
-        reward -= 0.04 * steer_change
-        self.last_steer = current_steer
 
         # Penalize carrying too much speed into sharp bends (anticipatory corner signal).
         track_norm = np.clip(track / 200.0, 0.0, 1.0)
@@ -181,6 +218,39 @@ class TorcsEnv:
             self.curve_speed_weight * curve_risk * (max(speed_x, 0.0) / 100.0) ** 2
         )
         reward -= p_curve_speed
+
+        # Reward carrying speed on true straights (good clearance + small heading error).
+        straight_clearance_factor = float(
+            np.clip(
+                (forward_clearance - self.straight_clearance_threshold)
+                / (1.0 - self.straight_clearance_threshold),
+                0.0,
+                1.0,
+            )
+        )
+        straight_alignment_factor = float(
+            np.clip(
+                (self.straight_angle_threshold - abs(angle))
+                / self.straight_angle_threshold,
+                0.0,
+                1.0,
+            )
+        )
+        straight_speed_ratio = float(
+            np.clip(max(speed_x, 0.0) / self.straight_speed_target, 0.0, 1.0)
+        )
+        r_straight_speed = (
+            self.straight_speed_bonus_weight
+            * straight_clearance_factor
+            * straight_alignment_factor
+            * straight_speed_ratio
+        )
+        reward += r_straight_speed
+
+        # --- Hairpin risk penalty ---
+        hairpin_risk = float(np.clip((0.45 - forward_clearance) / 0.45, 0.0, 1.0))
+        p_hairpin_speed = 0.06 * hairpin_risk * (max(speed_x, 0.0) / 80.0) ** 2
+        reward -= p_hairpin_speed
 
         # --- Collision penalty ---
         p_collision = 0.0
@@ -251,6 +321,7 @@ class TorcsEnv:
             "curve_risk": float(curve_risk),
             "p_collision": float(p_collision),
             "p_curve_speed": float(p_curve_speed),
+            "r_straight_speed": float(r_straight_speed),
             "p_brake": float(p_brake),
             "p_terminal": float(p_terminal),
             "raw_progress": float(raw_progress),
@@ -266,10 +337,11 @@ class TorcsEnv:
     def reset(self, relaunch=False):
         self.time_step = 0
         self._low_progress_steps = 0
+        self._prev_steer = 0.0
 
         # Force relaunch if the previous episode ended because TORCS shut down
         if getattr(self, "_force_relaunch_next_reset", False):
-            snakeoil3.launch_torcs(self.vision)
+            launch_torcs(self.vision)
             self._force_relaunch_next_reset = False
             self.initial_reset = True  # avoid sending meta on a dead client
 
@@ -278,7 +350,7 @@ class TorcsEnv:
             self.client.respond_to_server()
 
             if relaunch is True:
-                snakeoil3.launch_torcs(self.vision)
+                launch_torcs(self.vision)
                 print("### TORCS is RELAUNCHED ###")
 
         self.client = snakeoil3.Client(p=3001, vision=self.vision)
@@ -307,24 +379,13 @@ class TorcsEnv:
         except Exception:
             pass
 
-        # launch_torcs() already taskkills wtorcs.exe in your snakeoil3_gym.py
-        snakeoil3.launch_torcs(self.vision)
+        launch_torcs(self.vision)
 
         # Make reset() do the full handshake again
         self.initial_reset = True
 
-    """def end(self):
-        cwd = os.getcwd()
-        os.chdir('torcs')
-        os.system('taskkill /f /im wtorcs.exe')
-        os.chdir(cwd)"""
-
     def end(self):
-        # No need to chdir; taskkill works from anywhere
-        try:
-            os.system("taskkill /f /im wtorcs.exe")
-        except Exception:
-            pass
+        close_torcs()
 
     def get_obs(self):
         return self.observation
