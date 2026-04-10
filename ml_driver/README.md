@@ -1,4 +1,4 @@
-# TORCS RL – ML Skeleton
+# TORCS Reinforcement Learning Driver
 
 Train / evaluate an RL agent on TORCS with Stable-Baselines3.
 
@@ -6,10 +6,10 @@ Train / evaluate an RL agent on TORCS with Stable-Baselines3.
 
 ```
 ml_driver/
-├── config.yaml
+├── config.yaml       ← Various settings
 ├── wrappers.py       ← Gymnasium wrapper
 ├── utils.py          ← factories + helpers
-├── train.py
+├── train.py          ← RL agent training
 ├── evaluate.py       ← eval + demo (--episodes 1)
 ├── requirements.txt
 └── README.md
@@ -18,7 +18,6 @@ ml_driver/
 ## Setup
 
 ```bash
-cd gym_torcs/ml
 pip install -r requirements.txt
 ```
 
@@ -29,6 +28,7 @@ python train.py
 python train.py --timesteps 50000 --algorithm SAC
 ```
 
+Training settings can be changed in `config.yaml`
 Logs → `logs/` (TensorBoard), checkpoints → `checkpoints/`.
 
 ## Evaluate
@@ -39,6 +39,7 @@ python evaluate.py --episodes 1             # quick demo
 python evaluate.py --model checkpoints/torcs_rl_50000_steps.zip --episodes 20
 ```
 
-## Adding algorithms
-
-Add to `_ALGO_MAP` in `utils.py` and `_ALGO_LOAD` in `evaluate.py`, then set `train.algorithm` in `config.yaml`.
+## Potential Issues
+- All development was done on Python 3.10, other versions may not work
+- Make sure TORCS is in focus while launching because we simulate keyboard inputs to start the race
+- If TORCS is closing before the race starts you might need to increase the wait time in `gym_torcs/autostart.py`
